@@ -1,0 +1,50 @@
+version: "3.8"
+services:
+  mongo:
+    image: mongo:6
+    container_name: mongo
+    ports:
+      - "27017:27017"
+    networks:
+      - app-network
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: admin
+      MONGO_INITDB_ROOT_PASSWORD: admin123  
+  backend:
+    build: ./backend
+    ports:
+      - "5000:5000"
+    networks:
+      - app-network
+    env_file:
+      - ./backend/.env
+    environment:
+      MONGO_URI: mongodb://admin:admin123@mongo:27017/mybgapp?authSource=admin
+    depends_on:
+      - mongo
+
+  frontend-blue:
+    build: ./frontend-blue
+    ports:
+      - "3100:3100"
+    networks:
+      - app-network
+    env_file:
+      - ./frontend-blue/.env
+    depends_on:
+      - backend
+
+  frontend-green:
+    build: ./frontend-green
+    ports:
+      - "3200:3200"
+    networks:
+      - app-network
+    env_file:
+      - ./frontend-green/.env
+    depends_on:
+      - backend
+
+networks:
+  app-network:
+    driver: bridge
