@@ -1,109 +1,211 @@
 # Blue-Green Deployment Project
 
+## Overview
+A Kubernetes-based blue-green deployment setup with Node.js backend, MongoDB database, and dual frontend versions.
+
 ## Prerequisites
-- Docker Desktop
-- Minikube
-- kubectl
-- Helm
-- Node.js
-- Git
+- Docker Desktop with Kubernetes enabled
+- kubectl CLI
+- Administrator privileges (for hosts file editing)
 
-## Project Setup
+## Setup Steps
 
-### 1. Clone the Repository
+### 1. Configure Local DNS
+Add the following entry to your hosts file to access the application:
+
+**Windows**: `C:\Windows\System32\drivers\etc\hosts`
+**Linux/Mac**: `/etc/hosts`
+
+```
+127.0.0.1 frontend.local
+```
+
+### 2. Build Docker Images
 ```bash
-git clone <your-repository-url>
-cd blue-green-project
+# Build all required images
+docker build -t blue-green:backend ./backend/
+docker build -t blue-green:frontend-blue ./frontend-blue/
+docker build -t blue-green:frontend-green ./frontend-green/
 ```
 
-### 2. Local Development
-
-#### Backend Setup
-1. Navigate to backend directory
-2. Install dependencies
+### 3. Create MongoDB Secret
 ```bash
-cd backend
-npm install
+# Create the MongoDB connection secret
+kubectl create secret generic mongo-secret \
+  --from-literal=MONGO_URI='mongodb://admin:admin123@mongo:27017/mybgapp?authSource=admin'
 ```
-3. Create `.env` file with:
-```
-PORT=5000
-MONGO_URI=your-mongodb-connection-string
-```
-4. Start backend server
+
+### 4. Deploy to Kubernetes (Execution Order)
+
+**Important**: Deploy in this specific order to ensure dependencies are met:
+
 ```bash
-npm start
+# 1. Create persistent storage first
+kubectl apply -f k8s/mongo_pv.yml
+kubectl apply -f k8s/mongo_pvc.yml
+
+# 2. Deploy MongoDB
+kubectl apply -f k8s/deployments/mongo_deployment.yml
+kubectl apply -f k8s/services/mongo_service.yml
+
+# 3. Create ConfigMap
+kubectl apply -f k8s/app_configmap.yml
+
+# 4. Deploy backend
+kubectl apply -f k8s/deployments/backend_deployment.yml
+kubectl apply -f k8s/services/backend_service.yml
+
+# 5. Deploy both frontend versions
+kubectl apply -f k8s/deployments/frontend_blue_deployment.yml
+kubectl apply -f k8s/deployments/frontend_green_deployment.yml
+
+# 6. Create frontend service (starts with blue by default)
+kubectl apply -f k8s/services/frontend_service.yml
+
+# 7. Apply ingress for external access
+kubectl apply -f k8s/frontend_ingress.yml
 ```
 
-#### Frontend Setup
-1. Setup Blue Frontend
+### 5. Verify Deployment
 ```bash
-cd frontend-blue
-npm install
+# Check all resources are running
+kubectl get pods -n default
+kubectl get services -n default
+kubectl get ingress -n default
+
+# Check ingress controller is available
+kubectl get pods -n ingress-nginx
 ```
-2. Create `.env` file:
+
+## Project Structure
 ```
-PORT=3100
+├── backend/          # Node.js API server
+├── frontend-blue/    # Basic frontend version
+├── frontend-green/   # Enhanced frontend version
+├── k8s/             # Kubernetes manifests
+│   ├── deployments/
+│   ├── services/
+│   ├── mongo_pv.yml
+│   ├── mongo_pvc.yml
+│   ├── app_configmap.yml
+│   └── frontend_ingress.yml
+└── docker-compose.yml
 ```
-3. Start blue frontend
+
+## Access the Application
+
+### Frontend Access
+- **URL**: http://frontend.local/
+- **Currently Active**: Blue version (default)
+
+### API Endpoints
+- **Health Check**: http://frontend.local/health
+- **Users API**: http://frontend.local/api/users
+- **User Count**: http://frontend.local/api/users/count
+
+### Database Access
 ```bash
-npm start
+# Port forward for local access
+kubectl port-forward svc/mongo 27017:27017 -n default
+
+# Connect with MongoDB client
+mongosh "mongodb://admin:admin123@localhost:27017/mybgapp?authSource=admin"
 ```
 
-3. Repeat similar steps for Green Frontend (with PORT=3200)
+## Blue-Green Switching
 
-### 3. Dockerization
-
-#### Build Docker Images
+### Check Current Version
 ```bash
-# Build Backend Image
-docker build -t your-username/backend:v1 ./backend
-
-# Build Blue Frontend Image
-docker build -t your-username/frontend-blue:v1 ./frontend-blue
-
-# Build Green Frontend Image
-docker build -t your-username/frontend-green:v1 ./frontend-green
+kubectl get service frontend-service -o yaml
 ```
 
-### 4. Kubernetes Deployment
-
-#### Minikube Setup
-1. Start Minikube
+### Switch to Green Version
 ```bash
-minikube start
+kubectl patch service frontend-service -n default \
+  --type=merge \
+  -p '{"spec":{"selector":{"app":"frontend-green"}}}'
 ```
 
-2. Enable Required Addons
+### Switch to Blue Version
 ```bash
-minikube addons enable metrics-server
-minikube addons enable ingress
+kubectl patch service frontend-service -n default \
+  --type=merge \
+  -p '{"spec":{"selector":{"app":"frontend-blue"}}}'
 ```
 
-### 5. Create Kubernetes Manifest Files
+## Troubleshooting
 
-#### Required Manifest Files
-Create following files in `k8s/` directory:
-- `backend-deployment.yaml`
-- `frontend-blue-deployment.yaml`
-- `frontend-green-deployment.yaml`
-- `frontend-service.yaml`
-- `ingress.yaml`
+### Common Issues
 
-#### Service File Key Concepts
-Your `frontend-service.yaml` should:
-- Use selector to route traffic
-- Define version (blue/green)
-- Map ports correctly
-
-### 6. Deploy to Minikube
+**1. Ingress not working**
 ```bash
-# Apply all manifests
-kubectl apply -f k8s/
+# Check ingress controller
+kubectl get pods -n ingress-nginx
 
-# Verify deployments
-kubectl get deployments
-kubectl get services
+# Check ingress status
+kubectl describe ingress frontend-ingress
+```
+
+**2. Pods not starting**
+```bash
+# Check pod status and logs
+kubectl get pods
+kubectl logs <pod-name> --tail=20
+```
+
+**3. Service not accessible**
+```bash
+# Check service endpoints
+kubectl get endpoints
+
+# Test internal connectivity
+kubectl exec -it <pod-name> -- curl http://backend:5000/health
+```
+
+### Useful Commands
+```bash
+# View all resources
+kubectl get all
+
+# Delete everything and restart
+kubectl delete -f k8s/
+
+# Check persistent volumes
+kubectl get pv,pvc
+
+# View logs for specific component
+kubectl logs -l app=backend
+kubectl logs -l app=frontend-blue
+kubectl logs -l app=mongodb
+```
+
+## Architecture Details
+
+- **Backend**: Node.js/Express API with MongoDB
+- **Frontend**: Two versions with environment-aware API calls
+- **Database**: MongoDB with persistent storage
+- **Ingress**: Nginx ingress for path-based routing
+- **Storage**: HostPath persistent volume for MongoDB data
+
+## Development
+
+### Local Testing with Docker Compose
+```bash
+docker-compose up -d
+# Access at http://localhost:3100 (blue) and http://localhost:3200 (green)
+```
+
+### Making Changes
+1. Update code in respective directories
+2. Rebuild Docker images with new tags
+3. Update Kubernetes deployments
+4. Rollout restart: `kubectl rollout restart deployment/<name>`
+
+## Security Notes
+- MongoDB credentials are stored in Kubernetes secrets
+- Default credentials: admin/admin123 (change for production)
+- Ingress provides basic routing (consider TLS for production)
+- No authentication implemented in the API (add for production)
 kubectl get pods
 ```
 

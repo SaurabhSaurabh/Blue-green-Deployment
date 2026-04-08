@@ -5,7 +5,27 @@ const User = require('../models/user');
 // Create a new user
 router.post('/', async (req, res) => {
   try {
-    const newUser = new User(req.body);
+    // Validate interests and languages
+    const interests = req.body.interests || [];
+    const knownLanguages = req.body.knownLanguages || [];
+    
+    // Filter out empty strings
+    const validInterests = interests.filter(item => item && item.trim().length > 0);
+    const validLanguages = knownLanguages.filter(item => item && item.trim().length > 0);
+    
+    // Check if at least one interest and language provided
+    if (validInterests.length === 0 || validLanguages.length === 0) {
+      return res.status(400).json({ message: 'Please add at least one interest and language' });
+    }
+    
+    // Update the request body with filtered values
+    const userData = {
+      ...req.body,
+      interests: validInterests,
+      knownLanguages: validLanguages
+    };
+    
+    const newUser = new User(userData);
     const savedUser = await newUser.save();
     res.status(201).json(savedUser);
   } catch (err) {

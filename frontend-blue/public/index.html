@@ -57,19 +57,37 @@
     document.getElementById('registrationForm').addEventListener('submit', async function(e) {
       e.preventDefault();
       
+      const interestsInput = document.getElementById('interests').value.trim();
+      const languagesInput = document.getElementById('knownLanguages').value.trim();
+      
+      // Client-side validation
+      if (!interestsInput || interestsInput === '') {
+        document.getElementById('message').innerHTML = '<div class="error">Error: Please add at least one interest</div>';
+        return;
+      }
+      
+      if (!languagesInput || languagesInput === '') {
+        document.getElementById('message').innerHTML = '<div class="error">Error: Please add at least one language</div>';
+        return;
+      }
+      
       const formData = {
         name: document.getElementById('name').value,
         surname: document.getElementById('surname').value,
         dob: document.getElementById('dob').value,
         job: document.getElementById('job').value,
         place: document.getElementById('place').value,
-        interests: document.getElementById('interests').value.split(',').map(item => item.trim()),
-        knownLanguages: document.getElementById('knownLanguages').value.split(',').map(item => item.trim()),
+        interests: interestsInput.split(',').map(item => item.trim()),
+        knownLanguages: languagesInput.split(',').map(item => item.trim()),
         registeredFrom: 'basic'
       };
       
       try {
-        const response = await fetch('http://localhost:5000/api/users', {
+        // Use relative URL for ingress, absolute URL for local development
+        const isIngress = window.location.hostname !== 'localhost';
+        const apiUrl = isIngress ? '/api/users' : 'http://localhost:5000/api/users';
+        
+        const response = await fetch(apiUrl, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json'
